@@ -1,0 +1,17 @@
+{
+  "name": "wkapp-session-bot",
+  "version": "1.0.0",
+  "description": "WKApp Session.js integration for team notifications",
+  "main": "index.ts",
+  "scripts": {
+    "start": "bun run index.ts",
+    "test": "bun run index.ts test",
+    "summary": "bun run index.ts summary"
+  },
+  "dependencies": {
+    "@session.js/client": "^0.0.54"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WKApp Order Monitor</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial;
+        background: #1a1a1a;
+        color: #e0e0e0;
+        padding: 20px;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .header h1 {
+        color: white;
+        font-size: 28px;
+      }
+
+      .model-selector {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 10px 15px;
+        border-radius: 8px;
+      }
+
+      .model-selector label {
+        color: white;
+        font-size: 14px;
+      }
+
+      .model-selector input {
+        background: rgba(255, 255, 255, 0.9);
+        border: none;
+        padding: 5px 10px;
+        border-radius: 4px;
+        width: 200px;
+      }
+
+      .model-selector button {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 5px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .model-selector button:hover {
+        background: #45a049;
+      }
+
+      .status-badge {
+        display: inline-block;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 12px;
+        margin-left: 20px;
+        background: #4caf50;
+        color: white;
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.7;
+        }
+      }
+
+      .container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+
+      .panel {
+        background: #2a2a2a;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      .panel h2 {
+        color: #667eea;
+        margin-bottom: 15px;
+        font-size: 18px;
+      }
+
+      .action-log {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .log-entry {
+        padding: 10px;
+        margin-bottom: 5px;
+        background: #333;
+        border-radius: 5px;
+        border-left: 3px solid #667eea;
+        font-family: "Monaco", "Courier New", monospace;
+        font-size: 12px;
+      }
+
+      .log-entry.success {
+        border-left-color: #4caf50;
+      }
+
+      .log-entry.error {
+        border-left-color: #f44336;
+      }
+
+      .log-entry.processing {
+        border-left-color: #ff9800;
+      }
+
+      .timestamp {
+        color: #888;
+        font-size: 11px;
+      }
+
+      .error-modal {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #f44336;
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        z-index: 1000;
+        max-width: 500px;
+        box-shadow: 0 0 50px rgba(244, 67, 54, 0.5);
+      }
+
+      .error-modal h3 {
+        margin-bottom: 10px;
+      }
+
+      .error-modal button {
+        background: white;
+        color: #f44336;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        margin-top: 15px;
+        cursor: pointer;
+      }
+
+      .gemini-data {
+        background: #1a1a1a;
+        padding: 10px;
+        border-radius: 5px;
+        margin-top: 10px;
+        font-size: 11px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .gemini-data pre {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th {
+        background: #333;
+        padding: 10px;
+        text-align: left;
+        font-size: 12px;
+        color: #888;
+        border-bottom: 2px solid #667eea;
+      }
+
+      td {
+        padding: 10px;
+        border-bottom: 1px solid #333;
+        font-size: 13px;
+      }
+
+      tr:hover {
+        background: #333;
+      }
+
+      .orders-table {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .full-width {
+        grid-column: 1 / -1;
+      }
+
+      .stats {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+
+      .stat-card {
+        flex: 1;
+        background: #2a2a2a;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #667eea;
+      }
+
+      .stat-label {
+        color: #888;
+        font-size: 12px;
+        margin-top: 5px;
+      }
+
+      .processing-step {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 11px;
+        margin-right: 5px;
+      }
+
+      .step-ocr {
+        background: #2196f3;
+      }
+      .step-decrypt {
+        background: #9c27b0;
+      }
+      .step-gemini {
+        background: #ff9800;
+      }
+      .step-complete {
+        background: #4caf50;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div>
+        <h1>
+          copy📋🍝pasta<span class="status-badge" id="connectionStatus"
+            >Connecting...</span
+          >
+        </h1>
+      </div>
+      <div class="model-selector">
+        <label>AI Model:</label>
+        <input type="text" id="modelInput" value="google/gemini-flash-1.5" />
+        <button onclick="changeModel()">Update</button>
+        <button
+          onclick="sendDailySummary()"
+          style="margin-left: 15px; background: #ff9800"
+        >
+          📤 Send Summary
+        </button>
+        <button
+          onclick="exportCSV()"
+          style="margin-left: 10px; background: #4caf50"
+        >
+          📊 Export CSV
+        </button>
+        <button
+          onclick="resetExports()"
+          style="margin-left: 10px; background: #f44336"
+        >
+          🔄 Reset Exports
+        </button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="totalOrders">0</div>
+        <div class="stat-label">Total Orders</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="todayOrders">0</div>
+        <div class="stat-label">Today's Orders</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="currentModel">google/gemini-flash-1.5</div>
+        <div class="stat-label">Current Model</div>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="panel">
+        <h2>📋 Action Log</h2>
+        <div class="action-log" id="actionLog">
+          <!-- Logs will be inserted here -->
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>📦 Recent Orders</h2>
+        <div class="orders-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Order ID</th>
+                <th>Status</th>
+                <th>Model</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTable">
+              <!-- Orders will be inserted here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="panel">
+        <h2>📋 Import Tracking Numbers</h2>
+        <textarea
+          id="trackingBlob"
+          placeholder="Paste tracking data here - one per line:&#10;John Doe 1Z999999999999999999&#10;Jane Smith 9400111111111111111111"
+          style="
+            width: 100%;
+            height: 150px;
+            background: #333;
+            border: 1px solid #555;
+            color: #e0e0e0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            resize: vertical;
+          "
+        ></textarea>
+        <div style="margin-top: 10px">
+          <button
+            onclick="importTrackingNumbers()"
+            style="
+              background: #4caf50;
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 5px;
+              cursor: pointer;
+            "
+          >
+            📥 Import Tracking Numbers
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>🚚 Tracking Numbers</h2>
+        <div class="orders-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Tracking Number</th>
+                <th>Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="trackingTable">
+              <!-- Tracking numbers will be inserted here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel full-width" id="geminiPanel" style="display: none">
+      <h2>🤖 Last Gemini Interaction</h2>
+      <div class="gemini-data">
+        <h3>Request:</h3>
+        <pre id="geminiRequest"></pre>
+        <h3 style="margin-top: 15px">Response:</h3>
+        <pre id="geminiResponse"></pre>
+      </div>
+    </div>
+
+    <div class="error-modal" id="errorModal">
+      <h3>⚠️ Processing Error</h3>
+      <p id="errorMessage"></p>
+      <button onclick="closeError()">Dismiss</button>
+    </div>
+
+    <script>
+      const socket = io("http://localhost:6969");
+      let totalOrders = 0;
+      let todayOrders = 0;
+
+      socket.on("connect", function () {
+        document.getElementById("connectionStatus").textContent = "Connected";
+        document.getElementById("connectionStatus").style.background =
+          "#4caf50";
+        addLogEntry("System connected to server", "success");
+        loadInitialData();
+      });
+
+      socket.on("disconnect", function () {
+        document.getElementById("connectionStatus").textContent =
+          "Disconnected";
+        document.getElementById("connectionStatus").style.background =
+          "#f44336";
+        addLogEntry("System disconnected from server", "error");
+      });
+
+      socket.on("order_status", function (data) {
+        const stepBadges = {
+          received: '<span class="processing-step step-ocr">📥 Received</span>',
+          screenshot:
+            '<span class="processing-step step-ocr">📸 Screenshot</span>',
+          decrypt:
+            '<span class="processing-step step-decrypt">🔓 Decrypt</span>',
+          address_parse:
+            '<span class="processing-step step-gemini">📍 Address</span>',
+          vision_ocr:
+            '<span class="processing-step step-gemini">👁️ Vision OCR</span>',
+          duplicate_merge:
+            '<span class="processing-step step-complete">🔄 Merge</span>',
+        };
+
+        addLogEntry(
+          `${stepBadges[data.step] || ""} ${data.order_id}: ${data.message}`,
+          "processing"
+        );
+      });
+
+      socket.on("order_processed", function (data) {
+        addLogEntry(
+          `<span class="processing-step step-complete">✅ Complete</span> Order ${data.order_id} processed successfully`,
+          "success"
+        );
+
+        // Show enhanced processing data
+        document.getElementById("geminiPanel").style.display = "block";
+        document.getElementById("geminiRequest").textContent =
+          data.gemini_request;
+        document.getElementById("geminiResponse").textContent =
+          data.gemini_response;
+
+        // Add to orders table with enhanced info
+        addOrderToTable(data);
+
+        totalOrders++;
+        todayOrders++;
+        updateStats();
+      });
+
+      socket.on("order_error", function (data) {
+        addLogEntry(`❌ Order ${data.order_id} failed: ${data.error}`, "error");
+        showError(data.error);
+      });
+
+      socket.on("model_changed", function (data) {
+        document.getElementById("currentModel").textContent = data.new_model;
+        addLogEntry(`🔄 Model changed to ${data.new_model}`, "success");
+      });
+
+      socket.on("summary_sent", function (data) {
+        addLogEntry(`📤 ${data.message}`, "success");
+      });
+
+      socket.on("client_connected", function (data) {
+        addLogEntry(
+          `🔌 Client connected: ${data.client_id} (${data.client_platform}) from ${data.ip_address}`,
+          "success"
+        );
+      });
+
+      socket.on("export_reset", function (data) {
+        addLogEntry(`🔄 ${data.message}`, "success");
+      });
+
+      socket.on("tracking_numbers_imported", function (data) {
+        addLogEntry(
+          `📦 ${data.message}`,
+          data.errors.length > 0 ? "error" : "success"
+        );
+        if (data.errors.length > 0) {
+          console.log("Import errors:", data.errors);
+        }
+        loadTrackingNumbers();
+      });
+
+      function addLogEntry(message, type = "info") {
+        const logContainer = document.getElementById("actionLog");
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${type}`;
+
+        const time = new Date().toLocaleTimeString();
+        entry.innerHTML = `
+                <span class="timestamp">[${time}]</span> ${message}
+            `;
+
+        logContainer.insertBefore(entry, logContainer.firstChild);
+
+        // Keep only last 50 entries
+        while (logContainer.children.length > 50) {
+          logContainer.removeChild(logContainer.lastChild);
+        }
+      }
+
+      function addOrderToTable(order) {
+        const tbody = document.getElementById("ordersTable");
+        const row = tbody.insertRow(0);
+
+        const time = new Date(order.timestamp).toLocaleTimeString();
+        row.innerHTML = `
+                <td>${time}</td>
+                <td>${order.order_id}</td>
+                <td><span style="color: #4caf50;">✓ Processed</span></td>
+                <td>${order.model_used || "N/A"}</td>
+            `;
+
+        // Keep only last 20 orders
+        while (tbody.rows.length > 20) {
+          tbody.deleteRow(tbody.rows.length - 1);
+        }
+      }
+
+      function updateStats() {
+        document.getElementById("totalOrders").textContent = totalOrders;
+        document.getElementById("todayOrders").textContent = todayOrders;
+      }
+
+      function showError(message) {
+        document.getElementById("errorMessage").textContent = message;
+        document.getElementById("errorModal").style.display = "block";
+
+        setTimeout(() => {
+          closeError();
+        }, 5000);
+      }
+
+      function closeError() {
+        document.getElementById("errorModal").style.display = "none";
+      }
+
+      async function changeModel() {
+        const newModel = document.getElementById("modelInput").value;
+
+        try {
+          const response = await fetch("http://localhost:6969/api/model", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: newModel }),
+          });
+
+          const data = await response.json();
+          if (data.status === "success") {
+            document.getElementById("currentModel").textContent = newModel;
+            addLogEntry(`Model updated to ${newModel}`, "success");
+          }
+        } catch (error) {
+          showError("Failed to update model: " + error);
+        }
+      }
+
+      async function sendDailySummary() {
+        addLogEntry("📤 Sending daily summary to team chat...", "processing");
+
+        try {
+          const response = await fetch(
+            "http://localhost:6969/api/send-summary",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+
+          const data = await response.json();
+          if (data.status === "success") {
+            addLogEntry("✅ Daily summary sent successfully!", "success");
+          } else {
+            throw new Error(data.message);
+          }
+        } catch (error) {
+          addLogEntry(`❌ Failed to send daily summary: ${error}`, "error");
+          showError("Failed to send daily summary: " + error);
+        }
+      }
+
+      async function exportCSV() {
+        addLogEntry("📊 Generating CSV export...", "processing");
+
+        try {
+          const response = await fetch("http://localhost:6969/api/export-csv");
+
+          if (response.ok) {
+            // Trigger download
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `orders_${new Date()
+              .toISOString()
+              .slice(0, 19)
+              .replace(/:/g, "-")}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+
+            addLogEntry("✅ CSV export downloaded successfully!", "success");
+          } else {
+            const error = await response.json();
+            throw new Error(error.message);
+          }
+        } catch (error) {
+          addLogEntry(`❌ Failed to export CSV: ${error}`, "error");
+          showError("Failed to export CSV: " + error);
+        }
+      }
+
+      async function resetExports() {
+        if (
+          !confirm(
+            "Reset export state? This will make ALL previous orders available for export again."
+          )
+        ) {
+          return;
+        }
+
+        addLogEntry("🔄 Resetting export state...", "processing");
+
+        try {
+          const response = await fetch(
+            "http://localhost:6969/api/reset-exports",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+
+          const data = await response.json();
+          if (data.status === "success") {
+            addLogEntry(
+              `✅ Export state reset! ${data.reset_count} orders now available for export.`,
+              "success"
+            );
+          } else {
+            throw new Error(data.message);
+          }
+        } catch (error) {
+          addLogEntry(`❌ Failed to reset exports: ${error}`, "error");
+          showError("Failed to reset exports: " + error);
+        }
+      }
+
+      async function loadInitialData() {
+        try {
+          // Get current model
+          const modelResponse = await fetch("http://localhost:6969/api/model");
+          const modelData = await modelResponse.json();
+          document.getElementById("currentModel").textContent =
+            modelData.current_model;
+          document.getElementById("modelInput").value = modelData.current_model;
+
+          // Load orders
+          const ordersResponse = await fetch(
+            "http://localhost:6969/api/orders"
+          );
+          const orders = await ordersResponse.json();
+          totalOrders = orders.length;
+
+          // Count today's orders
+          const today = new Date().toDateString();
+          todayOrders = orders.filter((order) => {
+            const orderDate = new Date(order.processed_at).toDateString();
+            return orderDate === today;
+          }).length;
+
+          updateStats();
+
+          // Load recent logs
+          const logsResponse = await fetch("http://localhost:6969/api/logs");
+          const logs = await logsResponse.json();
+
+          logs.reverse().forEach((log) => {
+            addLogEntry(
+              `${log.action} - ${log.message}`,
+              log.status_code === 200 ? "success" : "error"
+            );
+          });
+
+          // Load tracking numbers
+          loadTrackingNumbers();
+        } catch (error) {
+          console.error("Failed to load initial data:", error);
+        }
+      }
+
+      async function importTrackingNumbers() {
+        const trackingBlob = document
+          .getElementById("trackingBlob")
+          .value.trim();
+
+        if (!trackingBlob) {
+          showError("Please enter tracking data to import");
+          return;
+        }
+
+        addLogEntry("📥 Importing tracking numbers...", "processing");
+
+        try {
+          const response = await fetch(
+            "http://localhost:6969/api/tracking-numbers",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tracking_blob: trackingBlob }),
+            }
+          );
+
+          const data = await response.json();
+          if (data.status === "success" || data.status === "warning") {
+            addLogEntry(
+              `✅ Imported ${data.stored_count} tracking numbers`,
+              data.errors.length > 0 ? "error" : "success"
+            );
+            if (data.errors.length > 0) {
+              console.log("Import errors:", data.errors);
+              addLogEntry(
+                `⚠️ ${data.errors.length} import errors - check console`,
+                "error"
+              );
+            }
+            // Clear the textarea
+            document.getElementById("trackingBlob").value = "";
+            // Reload tracking numbers
+            loadTrackingNumbers();
+          } else {
+            throw new Error(data.message);
+          }
+        } catch (error) {
+          addLogEntry(
+            `❌ Failed to import tracking numbers: ${error}`,
+            "error"
+          );
+          showError("Failed to import tracking numbers: " + error);
+        }
+      }
+
+      async function loadTrackingNumbers() {
+        try {
+          const response = await fetch(
+            "http://localhost:6969/api/tracking-numbers"
+          );
+          const trackingNumbers = await response.json();
+
+          const tbody = document.getElementById("trackingTable");
+          tbody.innerHTML = ""; // Clear existing rows
+
+          trackingNumbers.forEach((tracking) => {
+            const row = tbody.insertRow();
+            const createdTime = new Date(tracking.created_at).toLocaleString();
+
+            row.innerHTML = `
+                        <td>${tracking.name}</td>
+                        <td style="font-family: monospace; font-size: 11px;">${
+                          tracking.tracking_number
+                        }</td>
+                        <td>${
+                          tracking.is_used
+                            ? '<span style="color: #ff9800;">🔗 Used</span>'
+                            : '<span style="color: #4caf50;">✓ Available</span>'
+                        }</td>
+                        <td style="font-size: 11px;">${createdTime}</td>
+                    `;
+          });
+        } catch (error) {
+          console.error("Failed to load tracking numbers:", error);
+        }
+      }
+    </script>
+  </body>
+</html>
