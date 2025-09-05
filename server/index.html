@@ -422,6 +422,8 @@
       const socket = io("http://localhost:6969");
       let totalOrders = 0;
       let todayOrders = 0;
+      let lastClipboardContent = '';
+      let clipboardCheckInterval;
 
       socket.on("connect", function () {
         document.getElementById("connectionStatus").textContent = "Connected";
@@ -429,6 +431,7 @@
           "#4caf50";
         addLogEntry("System connected to server", "success");
         loadInitialData();
+        startClipboardMonitoring();
       });
 
       socket.on("disconnect", function () {
@@ -437,6 +440,7 @@
         document.getElementById("connectionStatus").style.background =
           "#f44336";
         addLogEntry("System disconnected from server", "error");
+        stopClipboardMonitoring();
       });
 
       socket.on("order_status", function (data) {
@@ -807,6 +811,122 @@
           console.error("Failed to load tracking numbers:", error);
         }
       }
+
+      // Clipboard monitoring functions
+      function startClipboardMonitoring() {
+        // Check for clipboard access permission first
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          clipboardCheckInterval = setInterval(checkClipboard, 2000); // Check every 2 seconds
+          addLogEntry("📋 Clipboard monitoring started for tracking numbers", "success");
+        } else {
+          addLogEntry("⚠️ Clipboard access not available in this browser", "error");
+        }
+      }
+
+      function stopClipboardMonitoring() {
+        if (clipboardCheckInterval) {
+          clearInterval(clipboardCheckInterval);
+          clipboardCheckInterval = null;
+        }
+      }
+
+      async function checkClipboard() {
+        try {
+          const clipboardText = await navigator.clipboard.readText();
+          
+          // Only process if clipboard content changed
+          if (clipboardText !== lastClipboardContent) {
+            lastClipboardContent = clipboardText;
+            
+            // Check if clipboard contains tracking number data
+            if (isTrackingNumberBlob(clipboardText)) {
+              handleTrackingNumberDetection(clipboardText);
+            }
+          }
+        } catch (error) {
+          // Clipboard access denied or not available - this is normal, don't spam logs
+          if (error.name !== 'NotAllowedError') {
+            console.log('Clipboard check failed:', error);
+          }
+        }
+      }
+
+      function isTrackingNumberBlob(text) {
+        if (!text || text.trim().length === 0) return false;
+        
+        const lines = text.trim().split('\n');
+        if (lines.length === 0) return false;
+        
+        let validLines = 0;
+        
+        // Check each line for tracking number pattern
+        for (let line of lines) {
+          line = line.trim();
+          if (line === '') continue; // Skip empty lines
+          
+          const parts = line.split(/\s+/);
+          if (parts.length < 2) continue; // Need at least name and tracking
+          
+          const trackingNumber = parts[parts.length - 1];
+          
+          // Common tracking number patterns
+          const trackingPatterns = [
+            /^1Z[0-9A-Z]{16}$/i,           // UPS
+            /^[0-9]{22}$/,                 // USPS (some formats)
+            /^94[0-9]{20}$/,               // USPS Priority/Express
+            /^[0-9]{12}$/,                 // FedEx
+            /^[0-9]{20}$/,                 // FedEx Ground
+            /^[0-9A-Z]{10,}$/i,            // Generic pattern - 10+ alphanumeric
+          ];
+          
+          if (trackingPatterns.some(pattern => pattern.test(trackingNumber))) {
+            validLines++;
+          }
+        }
+        
+        // Consider it tracking data if at least 50% of non-empty lines look like tracking numbers
+        const nonEmptyLines = lines.filter(line => line.trim() !== '').length;
+        return nonEmptyLines >= 1 && (validLines / nonEmptyLines) >= 0.5;
+      }
+
+      function handleTrackingNumberDetection(clipboardText) {
+        const lines = clipboardText.trim().split('\n');
+        const validLines = lines.filter(line => line.trim() !== '').length;
+        
+        addLogEntry(`📋 Detected ${validLines} tracking numbers in clipboard`, "success");
+        
+        // Show confirmation dialog
+        const shouldImport = confirm(`Detected tracking numbers in clipboard!\n\nFound ${validLines} lines of tracking data.\n\nWould you like to import them now?`);
+        
+        if (shouldImport) {
+          // Auto-fill the textarea
+          document.getElementById('trackingBlob').value = clipboardText.trim();
+          
+          // Auto-import
+          importTrackingNumbers();
+          
+          addLogEntry("📥 Auto-importing tracking numbers from clipboard", "processing");
+        } else {
+          addLogEntry("📋 Tracking number import declined", "info");
+        }
+      }
+
+      // Request clipboard permission when user interacts with tracking section
+      document.addEventListener('DOMContentLoaded', function() {
+        const trackingBlob = document.getElementById('trackingBlob');
+        if (trackingBlob) {
+          trackingBlob.addEventListener('focus', async function() {
+            try {
+              // Request permission by attempting to read clipboard
+              await navigator.clipboard.readText();
+            } catch (error) {
+              if (error.name === 'NotAllowedError') {
+                addLogEntry("ℹ️ Tip: Allow clipboard access to auto-detect tracking numbers", "info");
+              }
+            }
+          });
+        }
+      });
     </script>
   </body>
 </html>

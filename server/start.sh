@@ -65,8 +65,8 @@ fi
 # Initialize conda/mamba for current session
 if [ -f "$HOME/miniconda3/bin/conda" ]; then
     eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
-    # Initialize mamba shell
-    eval "$(mamba shell hook --shell bash)"
+elif [ -f "/opt/homebrew/Caskroom/mambaforge/base/bin/conda" ]; then
+    eval "$(/opt/homebrew/Caskroom/mambaforge/base/bin/conda shell.bash hook)"
 fi
 
 # Install Tesseract for OCR
@@ -104,11 +104,11 @@ fi
 
 # Install Python dependencies via mamba (faster than pip for compiled packages)
 echo -e "${BLUE}📦 Installing Python dependencies with Mamba...${NC}"
-mamba install -n server -c conda-forge flask flask-cors requests pillow pytesseract -y
+mamba install -n server -c conda-forge flask flask-cors requests pillow pytesseract python-gnupg python-dotenv -y
 
 # Install remaining packages via pip in the server environment
 echo -e "${BLUE}📦 Installing remaining dependencies with pip...${NC}"
-mamba run -n server pip install flask-socketio==5.3.6 python-gnupg==0.5.2 python-socketio==5.11.0 eventlet==0.36.1 python-dotenv==1.0.0
+mamba run -n server pip install flask-socketio==5.3.6 python-socketio==5.11.0 eventlet==0.36.1
 
 # Create necessary directories
 echo -e "${BLUE}📁 Creating directory structure...${NC}"
@@ -175,10 +175,15 @@ fi
 # Create startup script
 cat > run_server.sh << 'EOF'
 #!/bin/bash
-# Initialize conda/mamba
-eval "$(~/miniconda3/bin/conda shell.bash hook)"
-eval "$(mamba shell hook --shell bash)"
+# Initialize conda/mamba - try multiple paths
+if [ -f "$HOME/miniconda3/bin/conda" ]; then
+    eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+elif [ -f "/opt/homebrew/Caskroom/mambaforge/base/bin/conda" ]; then
+    eval "$(/opt/homebrew/Caskroom/mambaforge/base/bin/conda shell.bash hook)"
+fi
+
 export PATH="$HOME/.bun/bin:$PATH"
+
 # Use mamba run to execute in the server environment
 mamba run -n server python app.py
 EOF
