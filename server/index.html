@@ -294,12 +294,6 @@
         >
           📊 Export CSV
         </button>
-        <button
-          onclick="resetExports()"
-          style="margin-left: 10px; background: #f44336"
-        >
-          🔄 Reset Exports
-        </button>
       </div>
     </div>
 
@@ -506,9 +500,6 @@
         );
       });
 
-      socket.on("export_reset", function (data) {
-        addLogEntry(`🔄 ${data.message}`, "success");
-      });
 
       socket.on("tracking_numbers_imported", function (data) {
         addLogEntry(
@@ -651,40 +642,6 @@
         }
       }
 
-      async function resetExports() {
-        if (
-          !confirm(
-            "Reset export state? This will make ALL previous orders available for export again."
-          )
-        ) {
-          return;
-        }
-
-        addLogEntry("🔄 Resetting export state...", "processing");
-
-        try {
-          const response = await fetch(
-            "http://localhost:6969/api/reset-exports",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-            }
-          );
-
-          const data = await response.json();
-          if (data.status === "success") {
-            addLogEntry(
-              `✅ Export state reset! ${data.reset_count} orders now available for export.`,
-              "success"
-            );
-          } else {
-            throw new Error(data.message);
-          }
-        } catch (error) {
-          addLogEntry(`❌ Failed to reset exports: ${error}`, "error");
-          showError("Failed to reset exports: " + error);
-        }
-      }
 
       async function loadInitialData() {
         try {

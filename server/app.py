@@ -58,8 +58,7 @@ def init_db():
             gemini_response TEXT,
             customer_data TEXT,
             confidence_score REAL,
-            model_used TEXT,
-            exported BOOLEAN DEFAULT FALSE
+            model_used TEXT
         )
     ''')
     
@@ -613,11 +612,11 @@ def export_orders_csv():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Get orders with parsed customer data that haven't been exported yet
+        # Get orders with parsed customer data
         cursor.execute('''
             SELECT id, customer_data, processed_at, status
             FROM orders 
-            WHERE status = 'processed' AND customer_data IS NOT NULL AND (exported = FALSE OR exported IS NULL)
+            WHERE status = 'processed' AND customer_data IS NOT NULL
             ORDER BY processed_at DESC
         ''')
         
@@ -758,15 +757,7 @@ def export_orders_csv():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Mark all exported orders as exported
-        if orders:
-            order_ids = [order[0] for order in orders]  # Extract order IDs
-            placeholders = ','.join('?' * len(order_ids))
-            cursor.execute(f'''
-                UPDATE orders 
-                SET exported = TRUE 
-                WHERE id IN ({placeholders})
-            ''', order_ids)
+        # No need to mark orders as exported - removed that functionality
         
         # Mark tracking numbers as used and link to orders if any were assigned
         if used_tracking_ids:
@@ -855,47 +846,6 @@ def send_daily_summary():
             'message': f'Failed to send summary: {str(e)}'
         }), 500
 
-@app.route('/api/reset-exports', methods=['POST'])
-def reset_export_state():
-    """Reset the export state - mark all orders as not exported"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Count how many orders will be reset
-        cursor.execute('SELECT COUNT(*) FROM orders WHERE exported = TRUE')
-        reset_count = cursor.fetchone()[0]
-        
-        # Reset all orders to not exported
-        cursor.execute('UPDATE orders SET exported = FALSE')
-        
-        # Log the reset action
-        cursor.execute('''
-            INSERT INTO action_log (action, status_code, message)
-            VALUES (?, ?, ?)
-        ''', ('Export state reset', 200, f'Reset {reset_count} orders to not exported'))
-        
-        conn.commit()
-        conn.close()
-        
-        # Emit to dashboard
-        socketio.emit('export_reset', {
-            'message': f'Export state reset - {reset_count} orders available for export',
-            'timestamp': datetime.now().isoformat(),
-            'count': reset_count
-        })
-        
-        return jsonify({
-            'status': 'success',
-            'message': f'Export state reset successfully',
-            'reset_count': reset_count
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Reset failed: {str(e)}'
-        }), 500
 
 @app.route('/api/tracking-numbers', methods=['POST'])
 def store_tracking_numbers():
