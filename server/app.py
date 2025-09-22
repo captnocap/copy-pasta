@@ -14,6 +14,7 @@ import subprocess
 import csv
 from PIL import Image
 from io import BytesIO, StringIO
+import random
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -21,7 +22,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
 
 # Initialize GPG
 gpg = gnupg.GPG()
@@ -85,6 +86,22 @@ def init_db():
         )
     ''')
     
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS current_address (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            address1 TEXT,
+            address2 TEXT,
+            city TEXT,
+            state TEXT,
+            zip TEXT,
+            country TEXT DEFAULT 'US',
+            phone TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_current BOOLEAN DEFAULT TRUE
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -112,17 +129,27 @@ def process_screenshot(screenshot_b64, order_id):
 
 def decrypt_pgp(pgp_message):
     """Decrypt PGP message"""
+    print(f"DEBUG: Starting PGP decryption...")
     try:
-        decrypted = gpg.decrypt(pgp_message)
+        passphrase = os.getenv('GPG_PASSPHRASE')
+        print(f"DEBUG: Got passphrase: {'Yes' if passphrase else 'No'}")
+        print(f"DEBUG: PGP message length: {len(pgp_message) if pgp_message else 0}")
+        decrypted = gpg.decrypt(pgp_message, passphrase=passphrase)
+        print(f"DEBUG: Decryption result OK: {decrypted.ok}")
         if decrypted.ok:
+            print(f"DEBUG: Decryption successful, result length: {len(str(decrypted))}")
             return str(decrypted), None
         else:
+            print(f"DEBUG: Decryption failed with status: {decrypted.status}")
             return None, f"Decryption failed: {decrypted.status}"
     except Exception as e:
+        print(f"DEBUG: Exception in decrypt_pgp: {e}")
         return None, str(e)
 
 def parse_address_with_api(pgp_decrypted, model_name):
     """Parse address from PGP decrypted text using Gemini API (from old.py)"""
+    print(f"DEBUG: Starting Gemini API call with model: {model_name}")
+    print(f"DEBUG: PGP text length: {len(pgp_decrypted) if pgp_decrypted else 0}")
     try:
         prompt = f"""Parse this address into structured JSON format. Return ONLY the JSON, no other text:
 
@@ -141,6 +168,8 @@ Required JSON format:
 
 Return only valid JSON, no markdown or explanations."""
 
+        print(f"DEBUG: Making API request to {NANO_GPT_API}")
+        print(f"DEBUG: API key present: {'Yes' if NANO_GPT_API_KEY else 'No'}")
         response = requests.post(
             NANO_GPT_API,
             headers={
@@ -156,6 +185,7 @@ Return only valid JSON, no markdown or explanations."""
             timeout=15
         )
         
+        print(f"DEBUG: API response status: {response.status_code}")
         if response.status_code == 200:
             result = response.json()
             content = result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
@@ -337,13 +367,16 @@ If you can't find a field, use an empty string. Return only valid JSON, no expla
 @app.route('/api/order', methods=['POST'])
 def receive_order():
     order_id = f"ORD-{int(time.time())}"
+    print(f"DEBUG: Starting order processing for {order_id}")
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     try:
         data = request.json
+        print(f"DEBUG: Got request data, keys: {list(data.keys()) if data else 'None'}")
         
         # Emit initial status
+        print(f"DEBUG: Emitting initial status for {order_id}")
         socketio.emit('order_status', {
             'order_id': order_id,
             'step': 'received',
@@ -362,6 +395,7 @@ def receive_order():
             raise Exception(f"Screenshot save failed: {screenshot_error}")
         
         # Decrypt PGP
+        print(f"DEBUG: Starting PGP decryption for {order_id}")
         socketio.emit('order_status', {
             'order_id': order_id,
             'step': 'decrypt',
@@ -369,10 +403,12 @@ def receive_order():
         })
         
         pgp_decrypted, pgp_error = decrypt_pgp(data['pgp_message'])
+        print(f"DEBUG: PGP decryption result - Success: {pgp_decrypted is not None}, Error: {pgp_error}")
         if pgp_error:
             raise Exception(f"PGP decryption failed: {pgp_error}")
         
         # Parse address from PGP
+        print(f"DEBUG: Starting address parsing for {order_id}")
         socketio.emit('order_status', {
             'order_id': order_id,
             'step': 'address_parse',
@@ -380,6 +416,7 @@ def receive_order():
         })
         
         parsed_address, addr_error = parse_address_with_api(pgp_decrypted, current_model)
+        print(f"DEBUG: Address parsing result - Success: {parsed_address is not None}, Error: {addr_error}")
         if addr_error:
             raise Exception(f"Address parsing failed: {addr_error}")
         
@@ -610,8 +647,10 @@ def manage_model():
 def export_orders_csv():
     """Export orders to shipping label CSV format"""
     try:
+        print("DEBUG: Starting export function")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+        print("DEBUG: Database connection established")
         
         # Get orders with parsed customer data that haven't been exported yet
         cursor.execute('''
@@ -622,37 +661,81 @@ def export_orders_csv():
         ''')
         
         orders = cursor.fetchall()
+        print(f"DEBUG: Found {len(orders)} orders for export")
+        
+        # Get available tracking numbers and current address BEFORE closing connection
+        cursor.execute('''
+            SELECT id, name, number
+            FROM tracking_numbers 
+            ORDER BY created_at ASC
+        ''')
+        tracking_rows = cursor.fetchall()
+        
+        # Get current generated address from database
+        cursor.execute('''
+            SELECT name, address1, address2, city, state, zip, country, phone
+            FROM current_address 
+            WHERE is_current = TRUE 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        ''')
+        current_address_row = cursor.fetchone()
+        
         conn.close()
+        print("DEBUG: Database connection closed")
         
         # Create CSV in memory
         output = StringIO()
         writer = csv.writer(output)
         
-        # Shipping label headers - exactly as specified + tracking number
+        # Shipping label headers - exactly as specified by label processor
         header = [
             "Carrier", "Service", "Length", "Width", "Height", "Weight(Lbs)", "Weight(Oz)",
             "Package Type", "From Name", "From Address1", "From Address2", "From City",
             "From State/Province", "From Zip/Postal Code", "From Country", "From Phone Number",
             "To Name", "To Address1", "To Address2", "To City", "To State/Province",
-            "To Zip/Postal Code", "To Country", "To Phone Number", "Email", "Tracking Number"
+            "To Zip/Postal Code", "To Country", "To Phone Number", "Email"
         ]
         writer.writerow(header)
         
-        # Import config for return addresses and service specs
+        # Process the current address data
+        if current_address_row:
+            current_address = {
+                'name': current_address_row[0] or '',
+                'address1': current_address_row[1] or '',
+                'address2': current_address_row[2] or '',
+                'city': current_address_row[3] or '',
+                'state': current_address_row[4] or '',
+                'zip': current_address_row[5] or '',
+                'country': current_address_row[6] or 'US',
+                'phone': current_address_row[7] or ''
+            }
+            print(f"DEBUG: Using generated address: {current_address['name']} at {current_address['address1']}")
+        else:
+            # Import config for return addresses and service specs
+            try:
+                from config import RETURN_ADDRESSES, SERVICE_SPECS
+                current_address = list(RETURN_ADDRESSES.values())[0]
+                print("DEBUG: Using config address as fallback")
+            except ImportError:
+                # Fallback config if config.py doesn't exist
+                current_address = {
+                    'name': 'WKApp Fulfillment',
+                    'address1': '123 Main St',
+                    'address2': '',
+                    'city': 'Portland',
+                    'state': 'OR',
+                    'zip': '97201',
+                    'country': 'US',
+                    'phone': ''
+                }
+                print("DEBUG: Using hardcoded fallback address")
+        
+        # Import service specs
         try:
-            from config import RETURN_ADDRESSES, SERVICE_SPECS
-            default_warehouse = list(RETURN_ADDRESSES.values())[0]
+            from config import SERVICE_SPECS
             default_service = list(SERVICE_SPECS.values())[0]
         except ImportError:
-            # Fallback config if config.py doesn't exist
-            default_warehouse = {
-                'name': 'WKApp Fulfillment',
-                'address1': '123 Main St',
-                'address2': '',
-                'city': 'Portland',
-                'state': 'OR',
-                'zip': '97201'
-            }
             default_service = {
                 'carrier': 'USPS',
                 'service': 'Priority',
@@ -661,14 +744,8 @@ def export_orders_csv():
                 'package_type': 'Box'
             }
         
-        # Get available tracking numbers that match customer names
-        cursor.execute('''
-            SELECT id, name, tracking_number
-            FROM tracking_numbers 
-            WHERE is_used = FALSE 
-            ORDER BY created_at ASC
-        ''')
-        available_tracking = {row[1].lower().strip(): {'id': row[0], 'tracking': row[2]} for row in cursor.fetchall()}
+        # Process tracking numbers from earlier query
+        available_tracking = {row[1].lower().strip(): {'id': row[0], 'tracking': row[2]} for row in tracking_rows}
         
         used_tracking_ids = []
         
@@ -725,14 +802,14 @@ def export_orders_csv():
                     default_service.get('max_weight', '').replace('lbs', '').strip(),  # Weight(Lbs)
                     '',                                               # Weight(Oz) - empty
                     default_service.get('package_type', 'Box'),      # Package Type
-                    default_warehouse.get('name', ''),               # From Name
-                    default_warehouse.get('address1', ''),           # From Address1
-                    default_warehouse.get('address2', ''),           # From Address2
-                    default_warehouse.get('city', ''),               # From City
-                    default_warehouse.get('state', ''),              # From State/Province
-                    default_warehouse.get('zip', ''),                # From Zip/Postal Code
-                    'US',                                             # From Country
-                    '',                                               # From Phone Number - empty
+                    current_address.get('name', ''),                 # From Name - USING GENERATED ADDRESS
+                    current_address.get('address1', ''),             # From Address1 - USING GENERATED ADDRESS
+                    current_address.get('address2', ''),             # From Address2 - USING GENERATED ADDRESS
+                    current_address.get('city', ''),                 # From City - USING GENERATED ADDRESS
+                    current_address.get('state', ''),                # From State/Province - USING GENERATED ADDRESS
+                    current_address.get('zip', ''),                  # From Zip/Postal Code - USING GENERATED ADDRESS
+                    current_address.get('country', 'US'),            # From Country - USING GENERATED ADDRESS
+                    current_address.get('phone', ''),                # From Phone Number - USING GENERATED ADDRESS
                     parsed_address.get('name', ''),                  # To Name
                     parsed_address.get('address1', ''),              # To Address1
                     parsed_address.get('address2', ''),              # To Address2
@@ -741,8 +818,7 @@ def export_orders_csv():
                     parsed_address.get('zip', ''),                   # To Zip/Postal Code
                     'US',                                             # To Country
                     '',                                               # To Phone Number - empty
-                    email_content,                                    # Email - contains order details
-                    tracking_number                                   # Tracking Number
+                    email_content                                     # Email - contains order details
                 ]
                 writer.writerow(row)
                 
@@ -936,7 +1012,7 @@ def store_tracking_numbers():
             # Store in database
             try:
                 cursor.execute('''
-                    INSERT INTO tracking_numbers (name, tracking_number)
+                    INSERT INTO tracking_numbers (name, number)
                     VALUES (?, ?)
                 ''', (name, tracking_number))
                 stored_count += 1
@@ -982,7 +1058,7 @@ def get_tracking_numbers():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, name, tracking_number, created_at, linked_order_id, is_used
+            SELECT id, name, number, created_at
             FROM tracking_numbers
             ORDER BY created_at DESC
         ''')
@@ -992,10 +1068,8 @@ def get_tracking_numbers():
             tracking_numbers.append({
                 'id': row[0],
                 'name': row[1],
-                'tracking_number': row[2],
-                'created_at': row[3],
-                'linked_order_id': row[4],
-                'is_used': bool(row[5])
+                'number': row[2],
+                'created_at': row[3]
             })
         
         conn.close()
@@ -1005,6 +1079,164 @@ def get_tracking_numbers():
         return jsonify({
             'status': 'error',
             'message': f'Failed to fetch tracking numbers: {str(e)}'
+        }), 500
+
+@app.route('/api/dropoff-location', methods=['POST'])
+def get_dropoff_location():
+    """Generate address and find closest drop-off location"""
+    try:
+        # Execute the Node.js script to generate address and find dropoff
+        result = subprocess.run(
+            ['node', 'address-distance-finder.js', '--select'],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"Script failed: {result.stderr}")
+        
+        # Parse the output to extract key information
+        output_lines = result.stdout.split('\n')
+        
+        # Find the generated address info
+        generated_address = {}
+        selected_location = {}
+        
+        for i, line in enumerate(output_lines):
+            if 'From Name:' in line:
+                generated_address['name'] = line.split('From Name:')[1].strip()
+            elif 'From Address1:' in line:
+                generated_address['address1'] = line.split('From Address1:')[1].strip()
+            elif 'From City:' in line:
+                generated_address['city'] = line.split('From City:')[1].strip()
+            elif 'From State/Province:' in line:
+                generated_address['state'] = line.split('From State/Province:')[1].strip()
+            elif 'From Zip/Postal Code:' in line:
+                generated_address['zip'] = line.split('From Zip/Postal Code:')[1].strip()
+            elif '--- SELECTED LOCATION ---' in line:
+                # Parse the selected location
+                for j in range(i+1, min(i+6, len(output_lines))):
+                    if 'Type:' in output_lines[j]:
+                        selected_location['type'] = output_lines[j].split('Type:')[1].strip()
+                    elif 'Address:' in output_lines[j]:
+                        selected_location['address'] = output_lines[j].split('Address:')[1].strip()
+                    elif 'Distance:' in output_lines[j]:
+                        selected_location['distance'] = output_lines[j].split('Distance:')[1].strip()
+                    elif 'Collection Time:' in output_lines[j]:
+                        selected_location['collection_time'] = output_lines[j].split('Collection Time:')[1].strip()
+        
+        # Save generated address to database for CSV export
+        if generated_address:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Mark all previous addresses as not current
+            cursor.execute('UPDATE current_address SET is_current = FALSE')
+            
+            # Insert new current address
+            cursor.execute('''
+                INSERT INTO current_address (name, address1, address2, city, state, zip, country, phone, is_current)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)
+            ''', (
+                generated_address.get('name', ''),
+                generated_address.get('address1', ''),
+                generated_address.get('address2', ''),
+                generated_address.get('city', ''),
+                generated_address.get('state', ''),
+                generated_address.get('zip', ''),
+                'US',
+                ''
+            ))
+            
+            conn.commit()
+            conn.close()
+        
+        # Emit via WebSocket
+        socketio.emit('dropoff_location', {
+            'generated_address': generated_address,
+            'selected_location': selected_location,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        return jsonify({
+            'status': 'success',
+            'generated_address': generated_address,
+            'selected_location': selected_location,
+            'full_output': result.stdout
+        })
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'status': 'error',
+            'message': 'Script execution timed out'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/dropoff-history', methods=['GET'])
+def get_dropoff_history():
+    """Get the drop-off location history"""
+    try:
+        history_file = 'dropoff-history.json'
+        if os.path.exists(history_file):
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+                return jsonify(history)
+        else:
+            return jsonify({'history': []})
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/current-address', methods=['GET'])
+def get_current_address():
+    """Get the current generated address for CSV export"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT name, address1, address2, city, state, zip, country, phone, created_at
+            FROM current_address 
+            WHERE is_current = TRUE 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        ''')
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return jsonify({
+                'status': 'success',
+                'address': {
+                    'name': row[0],
+                    'address1': row[1],
+                    'address2': row[2],
+                    'city': row[3],
+                    'state': row[4],
+                    'zip': row[5],
+                    'country': row[6],
+                    'phone': row[7],
+                    'created_at': row[8]
+                }
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'address': None,
+                'message': 'No generated address found. Generate one first.'
+            })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
         }), 500
 
 @socketio.on('connect')

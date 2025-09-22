@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# WKApp Server Launcher with Tor Support
+# This script starts the Flask server and displays all connection addresses
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Banner
+echo -e "${PURPLE}"
+echo "██╗    ██╗██╗  ██╗ █████╗ ██████╗ ██████╗ "
+echo "██║    ██║██║ ██╔╝██╔══██╗██╔══██╗██╔══██╗"
+echo "██║ █╗ ██║█████╔╝ ███████║██████╔╝██████╔╝"
+echo "██║███╗██║██╔═██╗ ██╔══██║██╔═══╝ ██╔═══╝ "
+echo "╚███╔███╔╝██║  ██╗██║  ██║██║     ██║     "
+echo " ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝     "
+echo -e "${NC}"
+echo -e "${CYAN}WKApp Order Processing Server${NC}"
+echo "=================================="
+
+# Function to get local IP
+get_local_ip() {
+    # Try different methods to get local IP
+    if command -v hostname &> /dev/null; then
+        hostname -I | awk '{print $1}' 2>/dev/null || echo "192.168.8.218"
+    elif command -v ip &> /dev/null; then
+        ip route get 1.1.1.1 | grep -oP 'src \K\S+' 2>/dev/null || echo "192.168.8.218"
+    elif command -v ifconfig &> /dev/null; then
+        ifconfig | grep -E "inet[^6]" | grep -v "127.0.0.1" | awk '{print $2}' | head -1 | sed 's/addr://' 2>/dev/null || echo "192.168.8.218"
+    else
+        echo "192.168.8.218"
+    fi
+}
+
+# Function to check if Tor is running and get hidden service address
+get_tor_address() {
+    # Check if Tor service is running
+    tor_running=false
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        tor_running=true
+    elif brew services list 2>/dev/null | grep -q "tor.*started"; then
+        tor_running=true
+    fi
+    
+    if [ "$tor_running" = true ]; then
+        # Check for hostname file in various possible locations
+        if [ -f /var/lib/tor/wkapp/hostname ]; then
+            cat /var/lib/tor/wkapp/hostname 2>/dev/null
+        elif [ -f /usr/local/var/lib/tor/wkapp/hostname ]; then
+            cat /usr/local/var/lib/tor/wkapp/hostname 2>/dev/null
+        elif [ -f /opt/homebrew/var/lib/tor/wkapp/hostname ]; then
+            cat /opt/homebrew/var/lib/tor/wkapp/hostname 2>/dev/null
+        else
+            echo "not-generated"
+        fi
+    else
+        echo "not-running"
+    fi
+}
+
+# Kill any existing instances
+echo -e "${YELLOW}🔄 Stopping any existing server instances...${NC}"
+pkill -f "python app.py" 2>/dev/null || true
+sleep 1
+
+# Check if mamba environment exists (macOS specific)
+if [[ "$OSTYPE" == "darwin"* ]] && [ -f "/opt/homebrew/bin/mamba" ]; then
+    if ! /opt/homebrew/bin/mamba env list | grep -q "server"; then
+        echo -e "${RED}❌ Mamba server environment not found!${NC}"
+        echo -e "${YELLOW}💡 Using system Python instead...${NC}"
+        PYTHON_CMD="python3"
+    else
+        PYTHON_CMD="/opt/homebrew/bin/mamba run -n server python"
+    fi
+else
+    PYTHON_CMD="python3"
+fi
+
+# Check if Tor is set up
+echo -e "${BLUE}🔍 Checking Tor configuration...${NC}"
+TOR_ADDRESS=$(get_tor_address)
+
+if [ "$TOR_ADDRESS" = "not-running" ]; then
+    echo -e "${YELLOW}⚠️  Tor is not running. Hidden service will not be available.${NC}"
+    echo -e "${CYAN}💡 To enable Tor support, run: ./setup_tor.sh${NC}"
+elif [ "$TOR_ADDRESS" = "not-generated" ]; then
+    echo -e "${YELLOW}⚠️  Tor is running but hidden service not found.${NC}"
+    echo -e "${CYAN}💡 To set up hidden service, run: ./setup_tor.sh${NC}"
+else
+    echo -e "${GREEN}✅ Tor hidden service is active${NC}"
+fi
+
+# Get network information
+LOCAL_IP=$(get_local_ip)
+
+# Display connection information
+echo ""
+echo -e "${GREEN}🚀 Starting WKApp Server...${NC}"
+echo ""
+echo -e "${CYAN}📡 Connection Addresses:${NC}"
+echo "=========================="
+
+# Local connections
+echo -e "${GREEN}🏠 Local Access:${NC}"
+echo "   http://localhost:6969"
+echo "   http://127.0.0.1:6969"
+
+# Network connections
+if [ "$LOCAL_IP" != "unknown" ] && [ "$LOCAL_IP" != "" ]; then
+    echo ""
+    echo -e "${BLUE}🌐 Network Access:${NC}"
+    echo "   http://${LOCAL_IP}:6969"
+fi
+
+# Tor connections
+if [ "$TOR_ADDRESS" != "not-running" ] && [ "$TOR_ADDRESS" != "not-generated" ]; then
+    echo ""
+    echo -e "${PURPLE}🧅 Tor Hidden Service (for Whonix clients):${NC}"
+    echo "   http://${TOR_ADDRESS}:6969"
+    echo ""
+    echo -e "${YELLOW}📋 API Endpoints via Tor:${NC}"
+    echo "   Health Check: http://${TOR_ADDRESS}:6969/api/health"
+    echo "   Dashboard:    http://${TOR_ADDRESS}:6969/"
+    echo "   WebSocket:    ws://${TOR_ADDRESS}:6969"
+fi
+
+echo ""
+echo -e "${CYAN}🛠️  Available Endpoints:${NC}"
+echo "   GET  /                     - Web Dashboard"
+echo "   GET  /api/health           - Health Check"
+echo "   POST /api/order            - Process Order"
+echo "   GET  /api/export-csv       - Export Orders CSV"
+echo "   POST /api/dropoff-location - Generate Drop-off Location"
+echo "   GET  /api/dropoff-history  - View Drop-off History"
+echo "   GET  /api/current-address  - Current Generated Address"
+echo ""
+
+echo -e "${GREEN}🎯 Server starting on all interfaces (0.0.0.0:6969)...${NC}"
+echo -e "${YELLOW}📊 Press Ctrl+C to stop the server${NC}"
+echo ""
+echo "=================================="
+
+# Function to handle cleanup
+cleanup() {
+    echo ""
+    echo -e "${YELLOW}🛑 Shutting down server...${NC}"
+    echo "Server stopped."
+    exit 0
+}
+
+# Set trap to handle Ctrl+C
+trap cleanup INT
+
+# Start the server
+cd /Users/work/copy-pasta/server
+$PYTHON_CMD app.py

@@ -1,0 +1,52 @@
+{
+  "history": [
+    {
+      "address": "815 NE SCHUYLER ST, PORTLAND, OR 97212",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T21:49:23.399Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "200 SW MARKET ST, PORTLAND, OR 97201",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T21:50:17.154Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "1414 SW 3RD AVE, PORTLAND, OR 97201",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T21:50:17.156Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "3805 SE HAWTHORNE BLVD, PORTLAND, OR 97214",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T22:29:28.676Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "1410 SE POWELL BLVD, PORTLAND, OR 97202-2398",
+      "type": "postoffice",
+      "selectedDate": "2025-09-10T22:33:42.487Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "815 NE SCHUYLER ST, PORTLAND, OR 97212-4039",
+      "type": "postoffice",
+      "selectedDate": "2025-09-10T22:45:57.169Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "1410 SE POWELL BLVD, PORTLAND, OR 97242",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T23:07:35.690Z",
+      "collectionTime": "5:00 pm"
+    },
+    {
+      "address": "745 NW HOYT ST, PORTLAND, OR 97208",
+      "type": "bluebox",
+      "selectedDate": "2025-09-10T23:41:01.912Z",
+      "collectionTime": "6:00 pm"
+    }
+  ]
+}

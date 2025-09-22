@@ -1,0 +1,12 @@
+WKApp Server Network Configuration
+===================================
+
+Server Port: 6969
+Local IP Address: 192.168.8.218
+
+Access URLs:
+- Local: http://localhost:6969
+- Network: http://192.168.8.218:6969
+
+Client Configuration:
+Set your client apps to connect to: http://192.168.8.218:6969

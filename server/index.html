@@ -334,6 +334,7 @@
               <tr>
                 <th>Time</th>
                 <th>Order ID</th>
+                <th>Order Content</th>
                 <th>Status</th>
                 <th>Model</th>
               </tr>
@@ -342,6 +343,44 @@
               <!-- Orders will be inserted here -->
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drop-off Location Section -->
+    <div class="container">
+      <div class="panel">
+        <h2>📍 Drop-off Location Generator</h2>
+        <div style="margin-bottom: 20px;">
+          <button onclick="generateDropoffLocation()" 
+                  id="dropoffBtn"
+                  style="background: #2196F3; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px;">
+            🎲 Generate Address & Find Drop-off
+          </button>
+          <button onclick="loadDropoffHistory()" 
+                  style="background: #9C27B0; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; margin-left: 10px;">
+            📜 View History
+          </button>
+        </div>
+        
+        <div id="dropoffResult" style="display: none; margin-top: 20px; padding: 15px; background: #2a2a2a; border-radius: 8px;">
+          <h3 style="color: #4caf50; margin-bottom: 15px;">✅ Generated Address</h3>
+          <div id="generatedAddress" style="margin-bottom: 20px; padding: 10px; background: #333; border-radius: 5px;"></div>
+          
+          <h3 style="color: #2196F3; margin-bottom: 15px;">📬 Selected Drop-off Location</h3>
+          <div id="selectedLocation" style="padding: 10px; background: #333; border-radius: 5px;"></div>
+        </div>
+        
+        <div id="dropoffHistory" style="display: none; margin-top: 20px;">
+          <h3 style="color: #9C27B0; margin-bottom: 15px;">📅 Recent Drop-off History (14 days)</h3>
+          <div id="historyList" style="max-height: 200px; overflow-y: auto; padding: 10px; background: #333; border-radius: 5px;"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>📬 Current Drop-off Details</h2>
+        <div id="currentDropoff" style="padding: 15px; background: #2a2a2a; border-radius: 8px;">
+          <p style="color: #888;">No drop-off location selected yet. Click "Generate Address & Find Drop-off" to get started.</p>
         </div>
       </div>
     </div>
@@ -390,7 +429,6 @@
               <tr>
                 <th>Name</th>
                 <th>Tracking Number</th>
-                <th>Status</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -419,7 +457,7 @@
     </div>
 
     <script>
-      const socket = io("http://localhost:6969");
+      const socket = io();
       let totalOrders = 0;
       let todayOrders = 0;
       let lastClipboardContent = '';
@@ -521,6 +559,12 @@
         loadTrackingNumbers();
       });
 
+      socket.on("dropoff_location", function (data) {
+        console.log("Drop-off location update:", data);
+        displayDropoffResult(data);
+        addLogEntry("📍 Drop-off location updated via WebSocket", "info");
+      });
+
       function addLogEntry(message, type = "info") {
         const logContainer = document.getElementById("actionLog");
         const entry = document.createElement("div");
@@ -544,9 +588,30 @@
         const row = tbody.insertRow(0);
 
         const time = new Date(order.timestamp).toLocaleTimeString();
+        
+        // Extract order content from enhanced_order_data
+        let orderContent = "N/A";
+        if (order.enhanced_order_data) {
+          const data = order.enhanced_order_data;
+          const parts = [];
+          
+          if (data.quantity && data.listing) {
+            parts.push(`${data.quantity}x ${data.listing}`);
+          } else if (data.listing) {
+            parts.push(`1x ${data.listing}`);
+          }
+          
+          if (data.order_total) {
+            parts.push(`Total: ${data.order_total}`);
+          }
+          
+          orderContent = parts.length > 0 ? parts.join(" | ") : "N/A";
+        }
+        
         row.innerHTML = `
                 <td>${time}</td>
                 <td>${order.order_id}</td>
+                <td style="font-size: 11px;">${orderContent}</td>
                 <td><span style="color: #4caf50;">✓ Processed</span></td>
                 <td>${order.model_used || "N/A"}</td>
             `;
@@ -579,7 +644,7 @@
         const newModel = document.getElementById("modelInput").value;
 
         try {
-          const response = await fetch("http://localhost:6969/api/model", {
+          const response = await fetch("/api/model", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: newModel }),
@@ -600,7 +665,7 @@
 
         try {
           const response = await fetch(
-            "http://localhost:6969/api/send-summary",
+            "/api/send-summary",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -623,7 +688,7 @@
         addLogEntry("📊 Generating CSV export...", "processing");
 
         try {
-          const response = await fetch("http://localhost:6969/api/export-csv");
+          const response = await fetch("/api/export-csv");
 
           if (response.ok) {
             // Trigger download
@@ -664,7 +729,7 @@
 
         try {
           const response = await fetch(
-            "http://localhost:6969/api/reset-exports",
+            "/api/reset-exports",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -689,7 +754,7 @@
       async function loadInitialData() {
         try {
           // Get current model
-          const modelResponse = await fetch("http://localhost:6969/api/model");
+          const modelResponse = await fetch("/api/model");
           const modelData = await modelResponse.json();
           document.getElementById("currentModel").textContent =
             modelData.current_model;
@@ -697,7 +762,7 @@
 
           // Load orders
           const ordersResponse = await fetch(
-            "http://localhost:6969/api/orders"
+            "/api/orders"
           );
           const orders = await ordersResponse.json();
           totalOrders = orders.length;
@@ -712,7 +777,7 @@
           updateStats();
 
           // Load recent logs
-          const logsResponse = await fetch("http://localhost:6969/api/logs");
+          const logsResponse = await fetch("/api/logs");
           const logs = await logsResponse.json();
 
           logs.reverse().forEach((log) => {
@@ -743,7 +808,7 @@
 
         try {
           const response = await fetch(
-            "http://localhost:6969/api/tracking-numbers",
+            "/api/tracking-numbers",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -783,7 +848,7 @@
       async function loadTrackingNumbers() {
         try {
           const response = await fetch(
-            "http://localhost:6969/api/tracking-numbers"
+            "/api/tracking-numbers"
           );
           const trackingNumbers = await response.json();
 
@@ -796,14 +861,7 @@
 
             row.innerHTML = `
                         <td>${tracking.name}</td>
-                        <td style="font-family: monospace; font-size: 11px;">${
-                          tracking.tracking_number
-                        }</td>
-                        <td>${
-                          tracking.is_used
-                            ? '<span style="color: #ff9800;">🔗 Used</span>'
-                            : '<span style="color: #4caf50;">✓ Available</span>'
-                        }</td>
+                        <td style="font-family: monospace; font-size: 11px;">${tracking.number}</td>
                         <td style="font-size: 11px;">${createdTime}</td>
                     `;
           });
@@ -927,6 +985,117 @@
           });
         }
       });
+
+      // Drop-off Location Functions
+      async function generateDropoffLocation() {
+        const btn = document.getElementById('dropoffBtn');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '⏳ Generating...';
+        
+        try {
+          const response = await fetch('/api/dropoff-location', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+            displayDropoffResult(data);
+            addLogEntry('✅ Drop-off location generated and selected', 'success');
+          } else {
+            throw new Error(data.message || 'Failed to generate drop-off location');
+          }
+        } catch (error) {
+          console.error('Drop-off generation error:', error);
+          addLogEntry('❌ Failed to generate drop-off location: ' + error.message, 'error');
+          alert('Failed to generate drop-off location: ' + error.message);
+        } finally {
+          btn.disabled = false;
+          btn.innerText = originalText;
+        }
+      }
+      
+      function displayDropoffResult(data) {
+        const resultDiv = document.getElementById('dropoffResult');
+        const addressDiv = document.getElementById('generatedAddress');
+        const locationDiv = document.getElementById('selectedLocation');
+        const currentDiv = document.getElementById('currentDropoff');
+        
+        // Display generated address
+        addressDiv.innerHTML = `
+          <strong style="color: #4caf50;">Name:</strong> ${data.generated_address.name || 'N/A'}<br>
+          <strong style="color: #4caf50;">Address:</strong> ${data.generated_address.address1 || 'N/A'}<br>
+          <strong style="color: #4caf50;">City:</strong> ${data.generated_address.city || 'N/A'}, ${data.generated_address.state || 'N/A'} ${data.generated_address.zip || 'N/A'}
+        `;
+        
+        // Display selected drop-off location
+        locationDiv.innerHTML = `
+          <strong style="color: #2196F3;">Type:</strong> ${data.selected_location.type || 'N/A'}<br>
+          <strong style="color: #2196F3;">Address:</strong> ${data.selected_location.address || 'N/A'}<br>
+          <strong style="color: #2196F3;">Distance:</strong> ${data.selected_location.distance || 'N/A'}<br>
+          <strong style="color: #2196F3;">Collection Time:</strong> ${data.selected_location.collection_time || 'N/A'}
+        `;
+        
+        // Update current drop-off details
+        currentDiv.innerHTML = `
+          <div style="padding: 10px; background: #1a1a1a; border-radius: 5px; margin-bottom: 10px;">
+            <h4 style="color: #4caf50; margin-bottom: 10px;">From Address:</h4>
+            <p>${data.generated_address.name || 'N/A'}<br>
+            ${data.generated_address.address1 || 'N/A'}<br>
+            ${data.generated_address.city || 'N/A'}, ${data.generated_address.state || 'N/A'} ${data.generated_address.zip || 'N/A'}</p>
+          </div>
+          <div style="padding: 10px; background: #1a1a1a; border-radius: 5px;">
+            <h4 style="color: #2196F3; margin-bottom: 10px;">Drop-off Location:</h4>
+            <p><strong>${data.selected_location.type || 'N/A'}</strong><br>
+            ${data.selected_location.address || 'N/A'}<br>
+            Distance: ${data.selected_location.distance || 'N/A'}<br>
+            Collection: ${data.selected_location.collection_time || 'N/A'}</p>
+          </div>
+        `;
+        
+        resultDiv.style.display = 'block';
+        document.getElementById('dropoffHistory').style.display = 'none';
+      }
+      
+      async function loadDropoffHistory() {
+        try {
+          const response = await fetch('/api/dropoff-history');
+          const data = await response.json();
+          
+          const historyDiv = document.getElementById('dropoffHistory');
+          const historyList = document.getElementById('historyList');
+          
+          if (data.history && data.history.length > 0) {
+            const historyHTML = data.history.map(entry => {
+              const date = new Date(entry.selectedDate);
+              const daysAgo = Math.floor((new Date() - date) / (1000 * 60 * 60 * 24));
+              
+              return `
+                <div style="padding: 8px; margin-bottom: 8px; background: #2a2a2a; border-radius: 4px;">
+                  <strong style="color: #9C27B0;">${entry.address}</strong><br>
+                  <span style="color: #888; font-size: 12px;">
+                    ${entry.type} • Collection: ${entry.collectionTime} • ${daysAgo} days ago
+                  </span>
+                </div>
+              `;
+            }).join('');
+            
+            historyList.innerHTML = historyHTML;
+          } else {
+            historyList.innerHTML = '<p style="color: #888;">No drop-off locations used in the last 14 days.</p>';
+          }
+          
+          historyDiv.style.display = 'block';
+          document.getElementById('dropoffResult').style.display = 'none';
+        } catch (error) {
+          console.error('Failed to load history:', error);
+          addLogEntry('❌ Failed to load drop-off history', 'error');
+        }
+      }
     </script>
   </body>
 </html>
